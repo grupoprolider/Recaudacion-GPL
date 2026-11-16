@@ -34,7 +34,7 @@ export const saveData = async (parsedData, _filename) => {
   return newData;
 };
 
-export const seedDefaultFiles = async () => {
+export const seedDefaultFiles = async (preserveUserUploads = true) => {
   let defaultFiles = [
     'TABLA ACUMULADOS.xlsx',
     'RECA.04.xlsx',
@@ -55,7 +55,7 @@ export const seedDefaultFiles = async () => {
     // Fallback to default file list
   }
 
-  let combined = [];
+  let combined = preserveUserUploads ? ((await localforage.getItem(DATA_KEY)) || []) : [];
   for (const filename of defaultFiles) {
     try {
       const url = `./data/${encodeURIComponent(filename)}`;
@@ -83,13 +83,12 @@ export const loadData = async () => {
   const stored = await localforage.getItem(DATA_KEY);
   const storedTs = await localforage.getItem(MANIFEST_KEY);
 
-  // Check if server manifest has newer files (useful when shared via GitHub Pages)
   try {
     const manRes = await fetch('./data/manifest.json?t=' + Date.now());
     if (manRes.ok) {
       const manifest = await manRes.json();
       if (manifest.updatedAt && manifest.updatedAt !== storedTs) {
-        const seeded = await seedDefaultFiles();
+        const seeded = await seedDefaultFiles(true);
         if (seeded.length > 0) return seeded;
       }
     }
@@ -101,7 +100,7 @@ export const loadData = async () => {
   if (stored && stored.length > 0 && hasPlatforms) {
     return stored;
   }
-  return await seedDefaultFiles();
+  return await seedDefaultFiles(true);
 };
 
 export const clearData = async () => {

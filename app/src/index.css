@@ -36,6 +36,7 @@ body {
   min-height: 100vh;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
 }
 
 #root {
@@ -55,8 +56,21 @@ body {
   border: 1px solid var(--card-border);
   border-radius: 12px;
   padding: 0.85rem 1.25rem;
-  margin-bottom: 1.5rem;
+  margin-bottom: 1.25rem;
   box-shadow: var(--card-shadow);
+}
+
+.toolbar-filters {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.toolbar-actions {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
 }
 
 .filter-group {
@@ -91,13 +105,34 @@ body {
   border-color: var(--gpl-teal);
 }
 
+.notice-banner {
+  background: #ecfdf5;
+  border: 1px solid #6ee7b7;
+  color: #065f46;
+  border-radius: 10px;
+  padding: 0.85rem 1.15rem;
+  margin-bottom: 1.25rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.notice-banner.error {
+  background: #fef2f2;
+  border-color: #fca5a5;
+  color: #991b1b;
+}
+
 /* Encabezado Corporativo del Informe */
 .report-header {
   background: #ffffff;
   border: 1px solid var(--card-border);
   border-radius: 16px;
   overflow: hidden;
-  margin-bottom: 1.5rem;
+  margin-bottom: 1.25rem;
   box-shadow: var(--card-shadow);
 }
 
@@ -185,7 +220,7 @@ body {
 .upload-zone {
   border: 2px dashed var(--gpl-teal-mid);
   border-radius: 14px;
-  padding: 2rem;
+  padding: 2rem 1.25rem;
   text-align: center;
   cursor: pointer;
   background: #ffffff;
@@ -215,7 +250,7 @@ body {
 
 .dashboard-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: 1.25rem;
   margin-bottom: 1.25rem;
 }
@@ -265,6 +300,7 @@ body {
   width: 16px;
   height: 16px;
   margin-right: 0.3rem;
+  flex-shrink: 0;
 }
 
 .chart-container {
@@ -288,6 +324,7 @@ body {
   border-radius: 50%;
   background: var(--gpl-magenta);
   display: inline-block;
+  flex-shrink: 0;
 }
 
 .section-dot.teal {
@@ -310,6 +347,7 @@ body {
   transition: all 0.2s ease;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 0.45rem;
 }
 
@@ -340,6 +378,8 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
   padding: 0.85rem 1.25rem;
   font-size: 0.8rem;
   color: var(--text-secondary);
@@ -354,4 +394,112 @@ body {
 
 .animate-fade-in {
   animation: fadeIn 0.4s ease-out forwards;
+}
+
+/* Adaptación completa para Celulares y Tablets */
+@media (max-width: 768px) {
+  #root {
+    padding: 0.75rem 0.65rem 2rem;
+  }
+
+  .toolbar-container {
+    flex-direction: column;
+    align-items: stretch;
+    padding: 0.85rem;
+    gap: 0.75rem;
+  }
+
+  .toolbar-filters {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.6rem;
+  }
+
+  .filter-group {
+    justify-content: space-between;
+    width: 100%;
+  }
+
+  .select-input {
+    flex: 1;
+    max-width: 68%;
+    font-size: 0.85rem;
+    padding: 0.45rem 0.65rem;
+  }
+
+  .toolbar-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+    width: 100%;
+  }
+
+  .toolbar-actions .btn {
+    width: 100%;
+    padding: 0.55rem 0.65rem;
+    font-size: 0.8rem;
+  }
+
+  .report-header-content {
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 1rem 1.1rem;
+    gap: 0.85rem;
+  }
+
+  .brand-block {
+    gap: 0.85rem;
+    width: 100%;
+  }
+
+  .brand-logo {
+    height: 48px;
+  }
+
+  .brand-divider {
+    height: 38px;
+  }
+
+  .brand-titles h1 {
+    font-size: 1.05rem;
+  }
+
+  .brand-titles p {
+    font-size: 0.78rem;
+  }
+
+  .report-meta {
+    align-items: flex-start;
+    width: 100%;
+    border-top: 1px solid #e2e8f0;
+    padding-top: 0.65rem;
+  }
+
+  .dashboard-grid {
+    grid-template-columns: 1fr;
+    gap: 0.9rem;
+    margin-bottom: 0.9rem;
+  }
+
+  .glass-panel {
+    padding: 1rem 0.95rem;
+    border-radius: 12px;
+  }
+
+  .kpi-card .kpi-value {
+    font-size: 1.55rem;
+  }
+
+  .section-title {
+    font-size: 0.96rem;
+    margin-bottom: 0.65rem;
+  }
+
+  .report-footer {
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    padding: 0.75rem 0.5rem;
+    font-size: 0.75rem;
+  }
 }

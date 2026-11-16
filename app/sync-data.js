@@ -20,18 +20,18 @@ if (fs.existsSync(logoSrc)) {
   fs.copyFileSync(logoSrc, logoDest);
 }
 
-// 2. Copy all .xlsx files from rootDir to public/data/
+// 2. Copy all .xlsx and .xls files from rootDir to public/data/
+const isExcel = (f) => (f.toLowerCase().endsWith('.xlsx') || f.toLowerCase().endsWith('.xls')) && !f.startsWith('~$');
+
 const rootFiles = fs.readdirSync(rootDir);
 rootFiles.forEach(file => {
-  if (file.toLowerCase().endsWith('.xlsx') && !file.startsWith('~$')) {
+  if (isExcel(file)) {
     fs.copyFileSync(path.join(rootDir, file), path.join(dataDir, file));
   }
 });
 
-// 3. Generate manifest.json of all .xlsx files in public/data/
-const dataFiles = fs.readdirSync(dataDir).filter(
-  f => f.toLowerCase().endsWith('.xlsx') && !f.startsWith('~$')
-);
+// 3. Generate manifest.json of all Excel files in public/data/
+const dataFiles = fs.readdirSync(dataDir).filter(isExcel);
 
 // Put TABLA ACUMULADOS first so historical base loads first, then RECA files
 dataFiles.sort((a, b) => {

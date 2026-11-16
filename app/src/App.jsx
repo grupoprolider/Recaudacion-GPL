@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  UploadCloud, TrendingUp, TrendingDown, Trash2, Download, FileSpreadsheet, RefreshCw, Upload
+  UploadCloud, TrendingUp, TrendingDown, Trash2, Download, FileSpreadsheet, RefreshCw, Upload, X
 } from 'lucide-react';
 import { toPng } from 'html-to-image';
 import * as XLSX from 'xlsx';
@@ -16,28 +16,64 @@ function App() {
   const [exporting, setExporting] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [showUploader, setShowUploader] = useState(false);
+  const [uploadNotice, setUploadNotice] = useState(null);
   const [selectedPlatform, setSelectedPlatform] = useState('GLOBAL');
   const [selectedPeriod, setSelectedPeriod] = useState('LAST_12');
   const [selectedPlatformMonth, setSelectedPlatformMonth] = useState('');
+  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth <= 768);
   const dashboardRef = useRef(null);
 
   useEffect(() => {
     loadData().then(setData);
+    const onResize = () => setIsMobile(window.innerWidth <= 768);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
   }, []);
 
   const processFiles = async (files) => {
     setLoading(true);
+    setUploadNotice(null);
     try {
       let newData = [...data];
+      let totalParsed = 0;
+      const detectedPeriods = new Set();
+      let latestRecaKey = null;
+
       for (const file of files) {
         const parsed = await parseExcelFile(file);
+        totalParsed += parsed.length;
+        parsed.forEach(p => {
+          detectedPeriods.add(`${p.monthName} ${p.year}`);
+          if (p.subPlatform) {
+            latestRecaKey = `${p.year}-${p.month}`;
+          }
+        });
         newData = await saveData(parsed, file.name);
       }
-      setData(newData);
-      setShowUploader(false);
+
+      if (totalParsed === 0) {
+        setUploadNotice({
+          type: 'error',
+          text: 'No se encontraron filas de recaudación válidas en el archivo seleccionado. Verifica que tenga las columnas COBRADOS y MONTO COBRADO.'
+        });
+      } else {
+        setData(newData);
+        if (latestRecaKey) {
+          setSelectedPlatformMonth(latestRecaKey);
+        }
+        const periodsList = Array.from(detectedPeriods).slice(0, 5).join(', ');
+        setUploadNotice({
+          type: 'success',
+          text: `¡Planilla actualizada! Se procesaron ${totalParsed} registros (${periodsList}). Nota: queda guardado en este dispositivo; para que otros lo vean en el link web, cópialo a la carpeta y ejecuta Actualizar_Informe_GitHub.bat.`
+        });
+        setShowUploader(false);
+      }
     } catch (error) {
       console.error('Error parsing files', error);
-      alert('Hubo un error procesando el archivo. Asegúrate de que sea el formato correcto.');
+      setUploadNotice({
+        type: 'error',
+        text: 'Hubo un error procesando el archivo. Asegúrate de que sea un archivo Excel (.xlsx) válido.'
+      });
     } finally {
       setLoading(false);
       setDragOver(false);
@@ -63,15 +99,20 @@ function App() {
       await clearData();
       setData([]);
       setShowUploader(true);
+      setUploadNotice(null);
     }
   };
 
   const handleReloadDefaults = async () => {
     setLoading(true);
     try {
-      const seeded = await seedDefaultFiles();
+      const seeded = await seedDefaultFiles(false);
       setData(seeded);
       setShowUploader(false);
+      setUploadNotice({
+        type: 'success',
+        text: 'Se recargaron las planillas base publicadas en el servidor.'
+      });
     } finally {
       setLoading(false);
     }
@@ -159,7 +200,7 @@ function App() {
   const formatCompactMoney = (value) => {
     if (!value) return '$0';
     if (value >= 1000000) {
-      return `$${(value / 1000000).toLocaleString('es-AR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}M`;
+      return `$${(value / 1000000).toLocaleString('es-AR', { minimumFractionDigits: isMobile ? 0 : 1, maximumFractionDigits: isMobile ? 0 : 1 })}M`;
     }
     return `$${Math.round(value / 1000).toLocaleString('es-AR')}K`;
   };
@@ -204,7 +245,9 @@ function App() {
           name: d.platform,
           Recaudacion: d.monto,
           Clientes: d.clientes,
-          barLabel: `${formatCompactMoney(d.monto)} (${formatNumber(d.clientes)} cl.)`
+          barLabel: isMobile
+            ? `${formatCompactMoney(d.monto)} (${formatNumber(d.clientes)})`
+            : `${formatCompactMoney(d.monto)} (${formatNumber(d.clientes)} cl.)`
         }))
     : [];
 
@@ -218,7 +261,7 @@ function App() {
         pixelRatio: 2,
         cacheBust: true,
         style: {
-          padding: '24px',
+          padding: isMobile ? '12px' : '24px',
           borderRadius: '16px'
         }
       });
@@ -280,7 +323,7 @@ function App() {
     <div className="animate-fade-in">
       {/* Barra de controles superior */}
       <div className="toolbar-container">
-        <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
+        <div className="toolbar-filters">
           {data.length > 0 && (
             <>
               <div className="filter-group">
@@ -317,7 +360,7 @@ function App() {
           )}
         </div>
 
-        <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap' }}>
+        <div className="toolbar-actions">
           <button
             className="btn btn-secondary"
             onClick={() => setShowUploader(prev => !prev)}
@@ -329,21 +372,33 @@ function App() {
           {data.length > 0 && (
             <>
               <button className="btn" onClick={handleDownloadImage} disabled={exporting}>
-                <Download size={16} /> {exporting ? 'Generando PNG...' : 'Descargar Informe (PNG)'}
+                <Download size={16} /> {exporting ? 'Generando...' : 'Descargar PNG'}
               </button>
               <button className="btn btn-teal" onClick={handleDownloadExcel}>
                 <FileSpreadsheet size={16} /> Exportar Excel
               </button>
               <button className="btn btn-secondary" onClick={handleReloadDefaults} title="Recargar planillas originales">
-                <RefreshCw size={16} />
+                <RefreshCw size={16} /> {isMobile ? 'Base' : ''}
               </button>
               <button className="btn btn-secondary" onClick={handleClear} title="Limpiar datos del navegador">
-                <Trash2 size={16} />
+                <Trash2 size={16} /> {isMobile ? 'Limpiar' : ''}
               </button>
             </>
           )}
         </div>
       </div>
+
+      {uploadNotice && (
+        <div className={`notice-banner ${uploadNotice.type === 'error' ? 'error' : ''}`}>
+          <span>{uploadNotice.text}</span>
+          <button
+            onClick={() => setUploadNotice(null)}
+            style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'inherit', display: 'flex' }}
+          >
+            <X size={18} />
+          </button>
+        </div>
+      )}
 
       {/* Zona desplegable para cargar nuevos archivos Excel */}
       {(showUploader || data.length === 0) && (
@@ -360,13 +415,18 @@ function App() {
             multiple
             accept=".xlsx,.xls"
             style={{ display: 'none' }}
-            onChange={(e) => e.target.files && processFiles(e.target.files)}
+            onChange={(e) => {
+              if (e.target.files && e.target.files.length > 0) {
+                processFiles(e.target.files);
+                e.target.value = '';
+              }
+            }}
           />
           <UploadCloud className="icon" />
           <p>
             {loading
               ? 'Procesando planillas...'
-              : 'Arrastra aquí los archivos RECA o TABLA ACUMULADOS (.xlsx), o haz clic para seleccionarlos'}
+              : 'Arrastra aquí los archivos RECA o TABLA ACUMULADOS (.xlsx), o toca para seleccionarlos'}
           </p>
         </div>
       )}
@@ -436,14 +496,25 @@ function App() {
                 <span className="section-dot teal" />
                 Evolución Mensual de Recaudación ($)
               </h2>
-              <div className="chart-container" style={{ height: '360px' }}>
+              <div className="chart-container" style={{ height: isMobile ? '290px' : '360px' }}>
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={chartData} margin={{ top: 28, right: 20, left: 10, bottom: 10 }}>
+                  <BarChart
+                    data={chartData}
+                    margin={{ top: 24, right: isMobile ? 8 : 20, left: isMobile ? -12 : 10, bottom: isMobile ? 20 : 10 }}
+                  >
                     <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                    <XAxis dataKey="name" stroke="#4e6772" tick={{ fill: '#093947', fontSize: 12, fontWeight: 600 }} />
+                    <XAxis
+                      dataKey="name"
+                      stroke="#4e6772"
+                      angle={isMobile ? -35 : 0}
+                      textAnchor={isMobile ? 'end' : 'middle'}
+                      height={isMobile ? 48 : 30}
+                      interval={0}
+                      tick={{ fill: '#093947', fontSize: isMobile ? 10 : 12, fontWeight: 600 }}
+                    />
                     <YAxis
                       stroke="#4e6772"
-                      tick={{ fill: '#4e6772', fontSize: 12 }}
+                      tick={{ fill: '#4e6772', fontSize: isMobile ? 10 : 12 }}
                       tickFormatter={(value) => `$${(value / 1000000).toFixed(0)}M`}
                     />
                     <Tooltip
@@ -453,15 +524,15 @@ function App() {
                       formatter={(value) => [formatMoney(value), 'Recaudación']}
                       labelFormatter={(label, payload) => payload?.[0]?.payload?.fullName || label}
                     />
-                    <Bar dataKey="Recaudacion" fill="#123C49" radius={[6, 6, 0, 0]}>
+                    <Bar dataKey="Recaudacion" fill="#123C49" radius={[5, 5, 0, 0]}>
                       {showDetailedLabels && (
                         <LabelList
                           dataKey="RecaudacionLabel"
                           position="top"
                           fill="#093947"
-                          fontSize={11}
+                          fontSize={isMobile ? 9 : 11}
                           fontWeight={700}
-                          offset={8}
+                          offset={6}
                         />
                       )}
                     </Bar>
@@ -478,14 +549,25 @@ function App() {
                 <span className="section-dot cyan" />
                 Evolución Mensual de Clientes Cobrados
               </h2>
-              <div className="chart-container" style={{ height: '330px' }}>
+              <div className="chart-container" style={{ height: isMobile ? '280px' : '330px' }}>
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={chartData} margin={{ top: 28, right: 20, left: 10, bottom: 10 }}>
+                  <BarChart
+                    data={chartData}
+                    margin={{ top: 24, right: isMobile ? 8 : 20, left: isMobile ? -12 : 10, bottom: isMobile ? 20 : 10 }}
+                  >
                     <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                    <XAxis dataKey="name" stroke="#4e6772" tick={{ fill: '#093947', fontSize: 12, fontWeight: 600 }} />
+                    <XAxis
+                      dataKey="name"
+                      stroke="#4e6772"
+                      angle={isMobile ? -35 : 0}
+                      textAnchor={isMobile ? 'end' : 'middle'}
+                      height={isMobile ? 48 : 30}
+                      interval={0}
+                      tick={{ fill: '#093947', fontSize: isMobile ? 10 : 12, fontWeight: 600 }}
+                    />
                     <YAxis
                       stroke="#4e6772"
-                      tick={{ fill: '#4e6772', fontSize: 12 }}
+                      tick={{ fill: '#4e6772', fontSize: isMobile ? 10 : 12 }}
                       tickFormatter={(value) => formatNumber(value)}
                     />
                     <Tooltip
@@ -495,15 +577,15 @@ function App() {
                       formatter={(value) => [formatNumber(value), 'Clientes Cobrados']}
                       labelFormatter={(label, payload) => payload?.[0]?.payload?.fullName || label}
                     />
-                    <Bar dataKey="Clientes" fill="#159A8A" radius={[6, 6, 0, 0]}>
+                    <Bar dataKey="Clientes" fill="#159A8A" radius={[5, 5, 0, 0]}>
                       {showDetailedLabels && (
                         <LabelList
                           dataKey="ClientesLabel"
                           position="top"
                           fill="#093947"
-                          fontSize={11}
+                          fontSize={isMobile ? 9 : 11}
                           fontWeight={700}
-                          offset={8}
+                          offset={6}
                         />
                       )}
                     </Bar>
@@ -520,7 +602,7 @@ function App() {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.75rem' }}>
                   <h2 className="section-title" style={{ marginBottom: 0 }}>
                     <span className="section-dot" />
-                    Participación por Plataforma de Cobranza — {activePlatformMonthLabel}
+                    Participación por Plataforma — {activePlatformMonthLabel}
                   </h2>
                   {availablePlatformMonths.length > 1 && (
                     <div className="filter-group">
@@ -538,22 +620,26 @@ function App() {
                   )}
                 </div>
 
-                <div className="chart-container" style={{ height: `${Math.max(290, platformData.length * 46)}px` }}>
+                <div className="chart-container" style={{ height: `${Math.max(270, platformData.length * (isMobile ? 42 : 46))}px` }}>
                   <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={platformData} layout="vertical" margin={{ top: 10, right: 175, left: 20, bottom: 10 }}>
+                    <BarChart
+                      data={platformData}
+                      layout="vertical"
+                      margin={{ top: 8, right: isMobile ? 115 : 175, left: isMobile ? 4 : 20, bottom: 8 }}
+                    >
                       <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                       <XAxis
                         type="number"
                         stroke="#4e6772"
-                        tick={{ fill: '#4e6772', fontSize: 12 }}
+                        tick={{ fill: '#4e6772', fontSize: isMobile ? 10 : 12 }}
                         tickFormatter={(value) => `$${(value / 1000000).toFixed(0)}M`}
                       />
                       <YAxis
                         dataKey="name"
                         type="category"
                         stroke="#4e6772"
-                        tick={{ fill: '#093947', fontSize: 12, fontWeight: 700 }}
-                        width={100}
+                        tick={{ fill: '#093947', fontSize: isMobile ? 10 : 12, fontWeight: 700 }}
+                        width={isMobile ? 74 : 100}
                       />
                       <Tooltip
                         contentStyle={{ backgroundColor: '#093947', border: 'none', borderRadius: '8px', color: '#fff' }}
@@ -569,9 +655,9 @@ function App() {
                           dataKey="barLabel"
                           position="right"
                           fill="#7B1C55"
-                          fontSize={12}
+                          fontSize={isMobile ? 10 : 12}
                           fontWeight={700}
-                          offset={10}
+                          offset={8}
                         />
                       </Bar>
                     </BarChart>
