@@ -10,6 +10,46 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, LabelList
 } from 'recharts';
 
+const renderTopBarLabel = (fill, fontSize) => (props) => {
+  const { x, y, width, value } = props;
+  if (value === undefined || value === null || value === '') return null;
+  return (
+    <text
+      x={Number(x) + Number(width) / 2}
+      y={Number(y) - 8}
+      fill={fill}
+      textAnchor="middle"
+      dominantBaseline="Auto"
+      fontSize={fontSize}
+      fontWeight="700"
+      fontFamily="Inter, Segoe UI, Arial, sans-serif"
+      style={{ fontSize: `${fontSize}px`, fontWeight: 700, fill }}
+    >
+      {value}
+    </text>
+  );
+};
+
+const renderRightBarLabel = (fill, fontSize) => (props) => {
+  const { x, y, width, height, value } = props;
+  if (value === undefined || value === null || value === '') return null;
+  return (
+    <text
+      x={Number(x) + Number(width) + 8}
+      y={Number(y) + Number(height) / 2 + 1}
+      fill={fill}
+      textAnchor="start"
+      dominantBaseline="middle"
+      fontSize={fontSize}
+      fontWeight="700"
+      fontFamily="Inter, Segoe UI, Arial, sans-serif"
+      style={{ fontSize: `${fontSize}px`, fontWeight: 700, fill }}
+    >
+      {value}
+    </text>
+  );
+};
+
 function App() {
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -260,13 +300,18 @@ function App() {
         backgroundColor: '#f3f6f8',
         pixelRatio: 2,
         cacheBust: true,
+        filter: (node) => {
+          if (node?.classList?.contains('recharts-tooltip-wrapper')) return false;
+          if (node?.classList?.contains('recharts-bar-cursor')) return false;
+          return true;
+        },
         style: {
           padding: isMobile ? '12px' : '24px',
           borderRadius: '16px'
         }
       });
       const link = document.createElement('a');
-      const periodLabel = selectedPeriod === 'LAST_12' ? 'Ultimos_12_Meses' : selectedPeriod === 'ALL' ? 'Historico' : selectedPeriod;
+      const periodLabel = selectedPeriod === 'LAST_12' ? 'Ultimos_12_Meses' : selectedPeriod === 'LAST_6' ? 'Ultimos_6_Meses' : selectedPeriod === 'ALL' ? 'Historico' : selectedPeriod;
       link.download = `Informe_GPL_${selectedPlatform}_${periodLabel}.png`;
       link.href = dataUrl;
       link.click();
@@ -305,7 +350,7 @@ function App() {
       XLSX.utils.book_append_sheet(wb, wsPlat, 'Por Plataforma');
     }
 
-    const periodLabel = selectedPeriod === 'LAST_12' ? 'Ultimos_12_Meses' : selectedPeriod === 'ALL' ? 'Historico' : selectedPeriod;
+    const periodLabel = selectedPeriod === 'LAST_12' ? 'Ultimos_12_Meses' : selectedPeriod === 'LAST_6' ? 'Ultimos_6_Meses' : selectedPeriod === 'ALL' ? 'Historico' : selectedPeriod;
     XLSX.writeFile(wb, `Informe_GPL_${selectedPlatform}_${periodLabel}.xlsx`);
   };
 
@@ -500,7 +545,7 @@ function App() {
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart
                     data={chartData}
-                    margin={{ top: 24, right: isMobile ? 8 : 20, left: isMobile ? -12 : 10, bottom: isMobile ? 20 : 10 }}
+                    margin={{ top: 28, right: isMobile ? 8 : 20, left: isMobile ? -12 : 10, bottom: isMobile ? 20 : 10 }}
                   >
                     <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                     <XAxis
@@ -524,15 +569,13 @@ function App() {
                       formatter={(value) => [formatMoney(value), 'Recaudación']}
                       labelFormatter={(label, payload) => payload?.[0]?.payload?.fullName || label}
                     />
-                    <Bar dataKey="Recaudacion" fill="#123C49" radius={[5, 5, 0, 0]}>
+                    <Bar dataKey="Recaudacion" fill="#123C49" radius={[5, 5, 0, 0]} isAnimationActive={false}>
                       {showDetailedLabels && (
                         <LabelList
                           dataKey="RecaudacionLabel"
                           position="top"
-                          fill="#093947"
-                          fontSize={isMobile ? 9 : 11}
-                          fontWeight={700}
-                          offset={6}
+                          isAnimationActive={false}
+                          content={renderTopBarLabel('#093947', isMobile ? 9 : 11)}
                         />
                       )}
                     </Bar>
@@ -553,7 +596,7 @@ function App() {
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart
                     data={chartData}
-                    margin={{ top: 24, right: isMobile ? 8 : 20, left: isMobile ? -12 : 10, bottom: isMobile ? 20 : 10 }}
+                    margin={{ top: 28, right: isMobile ? 8 : 20, left: isMobile ? -12 : 10, bottom: isMobile ? 20 : 10 }}
                   >
                     <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                     <XAxis
@@ -577,15 +620,13 @@ function App() {
                       formatter={(value) => [formatNumber(value), 'Clientes Cobrados']}
                       labelFormatter={(label, payload) => payload?.[0]?.payload?.fullName || label}
                     />
-                    <Bar dataKey="Clientes" fill="#159A8A" radius={[5, 5, 0, 0]}>
+                    <Bar dataKey="Clientes" fill="#159A8A" radius={[5, 5, 0, 0]} isAnimationActive={false}>
                       {showDetailedLabels && (
                         <LabelList
                           dataKey="ClientesLabel"
                           position="top"
-                          fill="#093947"
-                          fontSize={isMobile ? 9 : 11}
-                          fontWeight={700}
-                          offset={6}
+                          isAnimationActive={false}
+                          content={renderTopBarLabel('#093947', isMobile ? 9 : 11)}
                         />
                       )}
                     </Bar>
@@ -650,14 +691,12 @@ function App() {
                           'Recaudación'
                         ]}
                       />
-                      <Bar dataKey="Recaudacion" fill="#7B1C55" radius={[0, 6, 6, 0]}>
+                      <Bar dataKey="Recaudacion" fill="#7B1C55" radius={[0, 6, 6, 0]} isAnimationActive={false}>
                         <LabelList
                           dataKey="barLabel"
                           position="right"
-                          fill="#7B1C55"
-                          fontSize={isMobile ? 10 : 12}
-                          fontWeight={700}
-                          offset={8}
+                          isAnimationActive={false}
+                          content={renderRightBarLabel('#7B1C55', isMobile ? 10 : 12)}
                         />
                       </Bar>
                     </BarChart>
