@@ -215,6 +215,8 @@ body {
   border-radius: 14px;
   padding: 1.4rem 1.5rem;
   box-shadow: var(--card-shadow);
+  overflow: hidden;
+  position: relative;
 }
 
 .upload-zone {
@@ -389,11 +391,16 @@ body {
 
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
+  to { opacity: 1; transform: none; }
 }
 
 .animate-fade-in {
   animation: fadeIn 0.4s ease-out forwards;
+}
+
+.recharts-tooltip-wrapper {
+  pointer-events: none !important;
+  transition: none !important;
 }
 
 /* Adaptación completa para Celulares y Tablets */

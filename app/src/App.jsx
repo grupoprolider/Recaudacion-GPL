@@ -629,6 +629,8 @@ function App() {
                       tickFormatter={(value) => `$${(value / 1000000).toFixed(0)}M`}
                     />
                     <Tooltip
+                      isAnimationActive={false}
+                      allowEscapeViewBox={{ x: false, y: false }}
                       contentStyle={{ backgroundColor: '#093947', border: 'none', borderRadius: '8px', color: '#fff' }}
                       itemStyle={{ color: '#fff' }}
                       labelStyle={{ color: '#21C0AC', fontWeight: 700 }}
@@ -680,6 +682,8 @@ function App() {
                       tickFormatter={(value) => formatNumber(value)}
                     />
                     <Tooltip
+                      isAnimationActive={false}
+                      allowEscapeViewBox={{ x: false, y: false }}
                       contentStyle={{ backgroundColor: '#093947', border: 'none', borderRadius: '8px', color: '#fff' }}
                       itemStyle={{ color: '#fff' }}
                       labelStyle={{ color: '#21C0AC', fontWeight: 700 }}
@@ -811,6 +815,8 @@ function App() {
                         }
                       />
                       <Tooltip
+                        isAnimationActive={false}
+                        allowEscapeViewBox={{ x: false, y: false }}
                         contentStyle={{ backgroundColor: '#093947', border: 'none', borderRadius: '8px', color: '#fff' }}
                         itemStyle={{ color: '#fff' }}
                         labelStyle={{ color: '#f78da7', fontWeight: 700 }}
@@ -890,6 +896,8 @@ function App() {
                         width={isMobile ? 74 : 100}
                       />
                       <Tooltip
+                        isAnimationActive={false}
+                        allowEscapeViewBox={{ x: false, y: false }}
                         contentStyle={{ backgroundColor: '#093947', border: 'none', borderRadius: '8px', color: '#fff' }}
                         itemStyle={{ color: '#fff' }}
                         labelStyle={{ color: '#f78da7', fontWeight: 700 }}
