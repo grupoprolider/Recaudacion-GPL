@@ -23,6 +23,13 @@ const parsePossibleDate = (cell) => {
   return null;
 };
 
+const formatDayMonth = (d) => {
+  if (!d) return '';
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  return `${dd}/${mm}`;
+};
+
 const monthNames = [
   "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
   "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
@@ -95,10 +102,19 @@ export const parseExcelBuffer = (arrayBuffer) => {
       if (typeof cell === 'string' && cell.toUpperCase().includes('MONTO COBRADO')) {
         const monthIndex = monthBlocks.length + 1;
         if (monthIndex <= 12) {
+          // Detectar dónde están FECHA y DIA HABIL hacia la izquierda de MONTO COBRADO
+          let colFecha = index - 3;
+          let colDiaHabil = index - 2;
+          for (let k = Math.max(0, index - 6); k < index; k++) {
+            const h = typeof headerRow[k] === 'string' ? headerRow[k].toUpperCase().trim() : '';
+            if (h.includes('FECHA')) colFecha = k;
+            if (h.includes('DIA') || h.includes('DÍA')) colDiaHabil = k;
+          }
           monthBlocks.push({
             monthIndex,
             monthName: monthNames[monthIndex - 1],
-            colFecha: index - 3,
+            colFecha,
+            colDiaHabil,
             colCobrados: index - 1,
             colMonto: index,
           });
@@ -110,10 +126,6 @@ export const parseExcelBuffer = (arrayBuffer) => {
       let totalMonto = 0;
       let totalClientes = 0;
 
-      // En TABLA ACUMULADOS:
-      // - En 2024..2026 el total está en la Fila 25 (índice 24).
-      // - En 2020..2023 algunos meses tienen 23 días hábiles (hasta Fila 25) y el total está en la Fila 26 (índice 25).
-      // Tomamos entre Fila 25 (idx 24) y Fila 26 (idx 25) aquella que tenga el total del mes (mayor monto, siempre que no sea una fila de reintegros menor).
       const r25 = aoa[24];
       const r26 = aoa[25];
       const m25 = r25 && typeof r25[block.colMonto] === 'number' ? r25[block.colMonto] : 0;
@@ -123,7 +135,6 @@ export const parseExcelBuffer = (arrayBuffer) => {
 
       let chosenRowIndex = -1;
       if (m25 > 0 && m26 > m25 * 2) {
-        // Fila 25 era el día hábil 23 y Fila 26 es el total mensual
         totalMonto = m26;
         totalClientes = c26 > 0 ? Math.round(c26) : 0;
         chosenRowIndex = 25;
@@ -137,15 +148,41 @@ export const parseExcelBuffer = (arrayBuffer) => {
         chosenRowIndex = 25;
       }
 
+      const limitRow = chosenRowIndex > 0 ? chosenRowIndex : 24;
+
       if (totalMonto > 0 && totalClientes === 0) {
         let sumClientes = 0;
-        const limitRow = chosenRowIndex > 0 ? chosenRowIndex : 24;
         for (let r = headerRowIndex + 1; r < limitRow; r++) {
           if (aoa[r] && typeof aoa[r][block.colCobrados] === 'number') {
             sumClientes += aoa[r][block.colCobrados];
           }
         }
         totalClientes = Math.round(sumClientes);
+      }
+
+      // Extraer detalle por Día Hábil (filas entre encabezado y fila de total)
+      const daily = [];
+      let runningAcum = 0;
+      for (let r = headerRowIndex + 1; r < limitRow; r++) {
+        const row = aoa[r];
+        if (!row) continue;
+        const mDia = typeof row[block.colMonto] === 'number' ? row[block.colMonto] : 0;
+        const cDia = typeof row[block.colCobrados] === 'number' ? Math.round(row[block.colCobrados]) : 0;
+        if (mDia > 0 || cDia > 0) {
+          const rawDia = row[block.colDiaHabil];
+          const diaHabil = typeof rawDia === 'number' && rawDia >= 1 && rawDia <= 25
+            ? rawDia
+            : daily.length + 1;
+          const dateObj = parsePossibleDate(row[block.colFecha]);
+          runningAcum += mDia;
+          daily.push({
+            diaHabil,
+            fecha: formatDayMonth(dateObj),
+            clientes: cDia,
+            monto: mDia,
+            acumulado: runningAcum
+          });
+        }
       }
 
       if (totalMonto > 0) {
@@ -158,7 +195,8 @@ export const parseExcelBuffer = (arrayBuffer) => {
           acumulado: 0,
           difMontos: 0,
           difClientes: 0,
-          subPlatform: null
+          subPlatform: null,
+          daily
         });
       }
     });
@@ -217,20 +255,28 @@ export const parseExcelBuffer = (arrayBuffer) => {
 
       let totalMonto = 0;
       let totalClientes = 0;
+      let totalRowIdx = -1;
 
-      let totalRow = aoa.find((row, idx) =>
-        idx >= 22 &&
-        row &&
-        row.some(cell => {
-          if (typeof cell !== 'string') return false;
-          const clean = cell.toUpperCase().replace(/\s+/g, '');
-          return clean === 'TOTAL$' || clean === 'TOTAL';
-        })
-      );
+      for (let idx = 22; idx < aoa.length; idx++) {
+        const row = aoa[idx];
+        if (
+          row &&
+          row.some(cell => {
+            if (typeof cell !== 'string') return false;
+            const clean = cell.toUpperCase().replace(/\s+/g, '');
+            return clean === 'TOTAL$' || clean === 'TOTAL';
+          })
+        ) {
+          totalRowIdx = idx;
+          break;
+        }
+      }
 
-      if (totalRow) {
+      const isGlobalSheet = sheetName.toUpperCase().trim() === 'GLOBAL';
+
+      if (totalRowIdx !== -1) {
+        const totalRow = aoa[totalRowIdx];
         totalClientes = Math.round(totalRow[colCobrados] || 0);
-        const isGlobalSheet = sheetName.toUpperCase().trim() === 'GLOBAL';
         if (isGlobalSheet && colTotalBruto !== -1 && typeof totalRow[colTotalBruto] === 'number' && totalRow[colTotalBruto] > 0) {
           totalMonto = totalRow[colTotalBruto];
         } else if (typeof totalRow[colMonto] === 'number' && totalRow[colMonto] > 0) {
@@ -250,29 +296,51 @@ export const parseExcelBuffer = (arrayBuffer) => {
           if (mVal > 0 && (typeof row[colCobrados] === 'number' && row[colCobrados] > 0)) {
             totalClientes = Math.round(row[colCobrados]);
             totalMonto = mVal;
+            totalRowIdx = i;
             break;
           }
         }
       }
 
-      if (totalMonto === 0) {
-        let sumM = 0;
-        let sumC = 0;
-        for (let r = headerRowIndex + 1; r < Math.min(25, aoa.length); r++) {
-          const row = aoa[r];
-          if (!row || !parsePossibleDate(row[0])) continue;
-          if (typeof row[colMonto] === 'number' && row[colMonto] > 0) sumM += row[colMonto];
-          if (typeof row[colCobrados] === 'number' && row[colCobrados] > 0) sumC += row[colCobrados];
+      // Extraer detalle por Día Hábil de esta solapa RECA
+      const daily = [];
+      let runningAcum = 0;
+      const maxDailyRow = totalRowIdx !== -1 ? totalRowIdx : Math.min(25, aoa.length);
+      for (let r = headerRowIndex + 1; r < maxDailyRow; r++) {
+        const row = aoa[r];
+        if (!row) continue;
+        const dateObj = parsePossibleDate(row[0]) || parsePossibleDate(row[1]);
+        if (!dateObj) continue;
+
+        let mDia = 0;
+        if (isGlobalSheet && colTotalBruto !== -1 && typeof row[colTotalBruto] === 'number' && row[colTotalBruto] > 0) {
+          mDia = row[colTotalBruto];
+        } else if (typeof row[colMonto] === 'number' && row[colMonto] > 0) {
+          mDia = row[colMonto];
+        } else if (colTotalBruto !== -1 && typeof row[colTotalBruto] === 'number' && row[colTotalBruto] > 0) {
+          mDia = row[colTotalBruto];
         }
-        if (sumM > 0) {
-          totalMonto = sumM;
-          totalClientes = Math.round(sumC);
+
+        const cDia = typeof row[colCobrados] === 'number' ? Math.round(row[colCobrados]) : 0;
+        if (mDia > 0 || cDia > 0) {
+          runningAcum += mDia;
+          daily.push({
+            diaHabil: daily.length + 1,
+            fecha: formatDayMonth(dateObj),
+            clientes: cDia,
+            monto: mDia,
+            acumulado: runningAcum
+          });
         }
+      }
+
+      if (totalMonto === 0 && daily.length > 0) {
+        totalMonto = daily.reduce((acc, d) => acc + d.monto, 0);
+        totalClientes = daily.reduce((acc, d) => acc + d.clientes, 0);
       }
 
       if (totalMonto > 0) {
         const cleanSheet = sheetName.trim();
-        const isGlobal = cleanSheet.toUpperCase() === 'GLOBAL';
         results.push({
           year,
           month,
@@ -282,7 +350,8 @@ export const parseExcelBuffer = (arrayBuffer) => {
           acumulado: 0,
           difMontos: 0,
           difClientes: 0,
-          subPlatform: isGlobal ? null : cleanSheet
+          subPlatform: isGlobalSheet ? null : cleanSheet,
+          daily
         });
       }
     });

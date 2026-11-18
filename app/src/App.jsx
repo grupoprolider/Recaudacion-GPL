@@ -60,6 +60,8 @@ function App() {
   const [selectedPlatform, setSelectedPlatform] = useState('GLOBAL');
   const [selectedPeriod, setSelectedPeriod] = useState('LAST_12');
   const [selectedPlatformMonth, setSelectedPlatformMonth] = useState('');
+  const [selectedDailyMonth, setSelectedDailyMonth] = useState('');
+  const [dailyMetric, setDailyMetric] = useState('MONTO');
   const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth <= 768);
   const dashboardRef = useRef(null);
 
@@ -100,11 +102,12 @@ function App() {
         setData(newData);
         if (latestRecaKey) {
           setSelectedPlatformMonth(latestRecaKey);
+          setSelectedDailyMonth(latestRecaKey);
         }
         const periodsList = Array.from(detectedPeriods).slice(0, 5).join(', ');
         setUploadNotice({
           type: 'success',
-          text: `¡Planilla actualizada! Se procesaron ${totalParsed} registros (${periodsList}). Nota: queda guardado en este dispositivo; para que otros lo vean en el link web, cópialo a la carpeta y ejecuta Actualizar_Informe_GitHub.bat.`
+          text: `¡Planilla actualizada! Se procesaron ${totalParsed} registros (${periodsList}).`
         });
         setShowUploader(false);
       }
@@ -256,6 +259,55 @@ function App() {
     ClientesLabel: formatNumber(d.clientes)
   }));
 
+  // Available months for Daily Business Day Curve (filtered by selectedPlatform)
+  const recordsWithDaily = [...platformFilteredData]
+    .filter(d => Array.isArray(d.daily) && d.daily.length > 0)
+    .reverse();
+
+  const activeDailyRecord =
+    (selectedDailyMonth && recordsWithDaily.find(d => `${d.year}-${d.month}` === selectedDailyMonth)) ||
+    (latest && Array.isArray(latest.daily) && latest.daily.length > 0 ? latest : recordsWithDaily[0]) ||
+    null;
+
+  const activeDailyMonthKey = activeDailyRecord ? `${activeDailyRecord.year}-${activeDailyRecord.month}` : '';
+
+  const dailyTotalMonto = activeDailyRecord
+    ? activeDailyRecord.daily.reduce((acc, item) => acc + (item.monto || 0), 0) || activeDailyRecord.monto
+    : 0;
+
+  const dailyChartData = activeDailyRecord
+    ? activeDailyRecord.daily.map((d, idx) => {
+        const pctAcum = dailyTotalMonto > 0 ? ((d.acumulado || 0) / dailyTotalMonto) * 100 : 0;
+        return {
+          name: isMobile ? `D${d.diaHabil || idx + 1}` : `Día ${d.diaHabil || idx + 1}`,
+          fullName: `Día Hábil ${d.diaHabil || idx + 1}${d.fecha ? ` (${d.fecha})` : ''}`,
+          diaHabil: d.diaHabil || idx + 1,
+          fecha: d.fecha || '',
+          Monto: d.monto,
+          Clientes: d.clientes,
+          Valor: dailyMetric === 'MONTO' ? d.monto : d.clientes,
+          Label: dailyMetric === 'MONTO' ? formatCompactMoney(d.monto) : formatNumber(d.clientes),
+          pctAcum: Math.min(100, pctAcum)
+        };
+      })
+    : [];
+
+  // Daily summary stats (Peak day, First 10 business days %, Daily average)
+  const peakDay =
+    dailyChartData.length > 0
+      ? dailyChartData.reduce((best, cur) => (cur.Monto > best.Monto ? cur : best), dailyChartData[0])
+      : null;
+
+  const first10DaysMonto = dailyChartData
+    .filter(d => d.diaHabil <= 10)
+    .reduce((acc, d) => acc + d.Monto, 0);
+  const first10DaysPct = dailyTotalMonto > 0 ? (first10DaysMonto / dailyTotalMonto) * 100 : 0;
+  const avgDailyMonto = dailyChartData.length > 0 ? dailyTotalMonto / dailyChartData.length : 0;
+  const avgDailyClientes =
+    dailyChartData.length > 0
+      ? dailyChartData.reduce((acc, d) => acc + d.Clientes, 0) / dailyChartData.length
+      : 0;
+
   // Available months that have individual platform breakdown (from RECA files)
   const platformRecords = data.filter(d => d.platform !== 'GLOBAL' && d.platform !== 'AGGREGATED');
   const availablePlatformMonths = Array.from(
@@ -338,6 +390,20 @@ function App() {
     }));
     const wsEvol = XLSX.utils.json_to_sheet(evolutionRows);
     XLSX.utils.book_append_sheet(wb, wsEvol, 'Evolución');
+
+    if (dailyChartData.length > 0 && activeDailyRecord) {
+      const dailyRows = dailyChartData.map(d => ({
+        Período: `${activeDailyRecord.monthName} ${activeDailyRecord.year}`,
+        Plataforma: selectedPlatform,
+        'Día Hábil': d.diaHabil,
+        Fecha: d.fecha,
+        'Clientes Cobrados': d.Clientes,
+        'Monto Cobrado ($)': Math.round(d.Monto * 100) / 100,
+        '% Acumulado del Mes': `${d.pctAcum.toFixed(1)}%`
+      }));
+      const wsDaily = XLSX.utils.json_to_sheet(dailyRows);
+      XLSX.utils.book_append_sheet(wb, wsDaily, 'Por Día Hábil');
+    }
 
     if (platformData.length > 0) {
       const platRows = platformData.map(p => ({
@@ -636,7 +702,148 @@ function App() {
             </div>
           </div>
 
-          {/* Gráfico 3: Desglose por Plataforma */}
+          {/* Gráfico Nuevo (#5): Curva de Cobranza por Día Hábil (Día 1 al 22) */}
+          {dailyChartData.length > 0 && activeDailyRecord && (
+            <div className="dashboard-grid">
+              <div className="glass-panel" style={{ gridColumn: '1 / -1' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.85rem', flexWrap: 'wrap', gap: '0.75rem' }}>
+                  <h2 className="section-title" style={{ marginBottom: 0 }}>
+                    <span className="section-dot" />
+                    Curva de Cobranza por Día Hábil (Día 1 al {dailyChartData.length}) — {activeDailyRecord.monthName} {activeDailyRecord.year}
+                  </h2>
+
+                  <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                    <div className="filter-group">
+                      <span className="filter-label">Métrica:</span>
+                      <select
+                        className="select-input"
+                        value={dailyMetric}
+                        onChange={(e) => setDailyMetric(e.target.value)}
+                      >
+                        <option value="MONTO">Recaudación ($)</option>
+                        <option value="CLIENTES">Clientes Cobrados</option>
+                      </select>
+                    </div>
+
+                    {recordsWithDaily.length > 1 && (
+                      <div className="filter-group">
+                        <span className="filter-label">Mes:</span>
+                        <select
+                          className="select-input"
+                          value={activeDailyMonthKey}
+                          onChange={(e) => setSelectedDailyMonth(e.target.value)}
+                        >
+                          {recordsWithDaily.map(r => (
+                            <option key={`${r.year}-${r.month}`} value={`${r.year}-${r.month}`}>
+                              {r.monthName} {r.year}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Resumen ejecutivo del ritmo diario del mes */}
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))',
+                    gap: '0.75rem',
+                    marginBottom: '1rem',
+                    background: '#f8fafc',
+                    padding: '0.75rem 1rem',
+                    borderRadius: '10px',
+                    border: '1px solid #e2e8f0'
+                  }}
+                >
+                  {peakDay && (
+                    <div>
+                      <div style={{ fontSize: '0.74rem', fontWeight: 700, color: '#4e6772', textTransform: 'uppercase' }}>
+                        Pico Máximo de Cobro
+                      </div>
+                      <div style={{ fontSize: '0.95rem', fontWeight: 800, color: '#7B1C55' }}>
+                        Día Hábil {peakDay.diaHabil} {peakDay.fecha ? `(${peakDay.fecha})` : ''} — {formatCompactMoney(peakDay.Monto)} ({formatNumber(peakDay.Clientes)} cl.)
+                      </div>
+                    </div>
+                  )}
+
+                  <div>
+                    <div style={{ fontSize: '0.74rem', fontWeight: 700, color: '#4e6772', textTransform: 'uppercase' }}>
+                      Primeros 10 Días Hábiles
+                    </div>
+                    <div style={{ fontSize: '0.95rem', fontWeight: 800, color: '#093947' }}>
+                      {first10DaysPct.toFixed(1)}% del mes ({formatCompactMoney(first10DaysMonto)})
+                    </div>
+                  </div>
+
+                  <div>
+                    <div style={{ fontSize: '0.74rem', fontWeight: 700, color: '#4e6772', textTransform: 'uppercase' }}>
+                      Promedio por Día Hábil
+                    </div>
+                    <div style={{ fontSize: '0.95rem', fontWeight: 800, color: '#159A8A' }}>
+                      {formatCompactMoney(avgDailyMonto)} / día ({formatNumber(avgDailyClientes)} cl./día)
+                    </div>
+                  </div>
+                </div>
+
+                <div className="chart-container" style={{ height: isMobile ? '290px' : '350px' }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart
+                      data={dailyChartData}
+                      margin={{ top: 28, right: isMobile ? 8 : 20, left: isMobile ? -12 : 10, bottom: isMobile ? 20 : 10 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                      <XAxis
+                        dataKey="name"
+                        stroke="#4e6772"
+                        angle={isMobile ? -45 : 0}
+                        textAnchor={isMobile ? 'end' : 'middle'}
+                        height={isMobile ? 48 : 30}
+                        interval={0}
+                        tick={{ fill: '#093947', fontSize: isMobile ? 9 : 11, fontWeight: 600 }}
+                      />
+                      <YAxis
+                        stroke="#4e6772"
+                        tick={{ fill: '#4e6772', fontSize: isMobile ? 10 : 12 }}
+                        tickFormatter={(value) =>
+                          dailyMetric === 'MONTO' ? `$${(value / 1000000).toFixed(0)}M` : formatNumber(value)
+                        }
+                      />
+                      <Tooltip
+                        contentStyle={{ backgroundColor: '#093947', border: 'none', borderRadius: '8px', color: '#fff' }}
+                        itemStyle={{ color: '#fff' }}
+                        labelStyle={{ color: '#f78da7', fontWeight: 700 }}
+                        formatter={(_value, _name, props) => {
+                          const p = props.payload;
+                          return [
+                            `${formatMoney(p.Monto)} • ${formatNumber(p.Clientes)} clientes (Acum: ${p.pctAcum.toFixed(1)}%)`,
+                            'Cobranza del Día'
+                          ];
+                        }}
+                        labelFormatter={(label, payload) => payload?.[0]?.payload?.fullName || label}
+                      />
+                      <Bar
+                        dataKey="Valor"
+                        fill={dailyMetric === 'MONTO' ? '#7B1C55' : '#159A8A'}
+                        radius={[4, 4, 0, 0]}
+                        isAnimationActive={false}
+                      >
+                        <LabelList
+                          dataKey="Label"
+                          position="top"
+                          isAnimationActive={false}
+                          content={renderTopBarLabel('#7B1C55', isMobile ? 8 : 10)}
+                        />
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Gráfico 4: Desglose por Plataforma */}
           {platformData.length > 0 && (
             <div className="dashboard-grid">
               <div className="glass-panel" style={{ gridColumn: '1 / -1' }}>

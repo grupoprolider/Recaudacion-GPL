@@ -1,7 +1,7 @@
 import localforage from 'localforage';
 import { parseExcelBuffer } from './parser';
 
-const DATA_KEY = 'recaudacion_data_v7';
+const DATA_KEY = 'recaudacion_data_v8';
 const MANIFEST_KEY = 'recaudacion_manifest_ts';
 
 export const mergeParsedData = (existingData, parsedData) => {
@@ -18,7 +18,11 @@ export const mergeParsedData = (existingData, parsedData) => {
     );
 
     if (existingIndex >= 0) {
-      newData[existingIndex] = newItem;
+      const prev = newData[existingIndex];
+      newData[existingIndex] = {
+        ...newItem,
+        daily: (newItem.daily && newItem.daily.length > 0) ? newItem.daily : (prev.daily || [])
+      };
     } else {
       newData.push(newItem);
     }
@@ -105,7 +109,8 @@ export const loadData = async () => {
   }
 
   const hasPlatforms = stored && stored.some(d => d.platform !== 'GLOBAL');
-  if (stored && stored.length > 0 && hasPlatforms) {
+  const hasDaily = stored && stored.some(d => Array.isArray(d.daily) && d.daily.length > 0);
+  if (stored && stored.length > 0 && hasPlatforms && hasDaily) {
     return stored;
   }
   return await seedDefaultFiles(true);
