@@ -75,7 +75,7 @@ export const parseExcelBuffer = (arrayBuffer) => {
     const year = parseInt(yearMatch[0], 10);
 
     const worksheet = workbook.Sheets[sheetName];
-    const aoa = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: null });
+    const aoa = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: null, blankrows: true });
     if (aoa.length < 2) return;
 
     let headerRowIndex = -1;
@@ -110,33 +110,42 @@ export const parseExcelBuffer = (arrayBuffer) => {
       let totalMonto = 0;
       let totalClientes = 0;
 
-      // En TABLA ACUMULADOS, la fila 25 (índice 24) contiene siempre el total histórico del mes.
-      const row25 = aoa[24];
-      if (row25 && typeof row25[block.colMonto] === 'number' && row25[block.colMonto] > 0) {
-        totalMonto = row25[block.colMonto];
-        if (typeof row25[block.colCobrados] === 'number' && row25[block.colCobrados] > 0) {
-          totalClientes = Math.round(row25[block.colCobrados]);
-        } else {
-          let sumClientes = 0;
-          for (let r = headerRowIndex + 1; r < 24; r++) {
-            if (aoa[r] && typeof aoa[r][block.colCobrados] === 'number') {
-              sumClientes += aoa[r][block.colCobrados];
-            }
+      // En TABLA ACUMULADOS:
+      // - En 2024..2026 el total está en la Fila 25 (índice 24).
+      // - En 2020..2023 algunos meses tienen 23 días hábiles (hasta Fila 25) y el total está en la Fila 26 (índice 25).
+      // Tomamos entre Fila 25 (idx 24) y Fila 26 (idx 25) aquella que tenga el total del mes (mayor monto, siempre que no sea una fila de reintegros menor).
+      const r25 = aoa[24];
+      const r26 = aoa[25];
+      const m25 = r25 && typeof r25[block.colMonto] === 'number' ? r25[block.colMonto] : 0;
+      const m26 = r26 && typeof r26[block.colMonto] === 'number' ? r26[block.colMonto] : 0;
+      const c25 = r25 && typeof r25[block.colCobrados] === 'number' ? r25[block.colCobrados] : 0;
+      const c26 = r26 && typeof r26[block.colCobrados] === 'number' ? r26[block.colCobrados] : 0;
+
+      let chosenRowIndex = -1;
+      if (m25 > 0 && m26 > m25 * 2) {
+        // Fila 25 era el día hábil 23 y Fila 26 es el total mensual
+        totalMonto = m26;
+        totalClientes = c26 > 0 ? Math.round(c26) : 0;
+        chosenRowIndex = 25;
+      } else if (m25 > 0) {
+        totalMonto = m25;
+        totalClientes = c25 > 0 ? Math.round(c25) : 0;
+        chosenRowIndex = 24;
+      } else if (m26 > 0) {
+        totalMonto = m26;
+        totalClientes = c26 > 0 ? Math.round(c26) : 0;
+        chosenRowIndex = 25;
+      }
+
+      if (totalMonto > 0 && totalClientes === 0) {
+        let sumClientes = 0;
+        const limitRow = chosenRowIndex > 0 ? chosenRowIndex : 24;
+        for (let r = headerRowIndex + 1; r < limitRow; r++) {
+          if (aoa[r] && typeof aoa[r][block.colCobrados] === 'number') {
+            sumClientes += aoa[r][block.colCobrados];
           }
-          totalClientes = Math.round(sumClientes);
         }
-      } else {
-        for (let i = 23; i <= Math.min(28, aoa.length - 1); i++) {
-          const row = aoa[i];
-          if (!row) continue;
-          const monto = row[block.colMonto];
-          const clientes = row[block.colCobrados];
-          if (typeof monto === 'number' && monto > 0 && typeof clientes === 'number' && clientes > 0) {
-            totalMonto = monto;
-            totalClientes = Math.round(clientes);
-            break;
-          }
-        }
+        totalClientes = Math.round(sumClientes);
       }
 
       if (totalMonto > 0) {
@@ -157,7 +166,6 @@ export const parseExcelBuffer = (arrayBuffer) => {
 
   // 2. Si no es tabla de acumulados, procesar como RECA (todas las solapas de plataformas)
   if (!isAcumulados) {
-    // Detectar fecha global del libro por si alguna solapa no tiene fechas
     let workbookYearMonth = null;
     for (const sn of workbook.SheetNames) {
       const aoa = XLSX.utils.sheet_to_json(workbook.Sheets[sn], { header: 1, defval: null });
@@ -210,7 +218,6 @@ export const parseExcelBuffer = (arrayBuffer) => {
       let totalMonto = 0;
       let totalClientes = 0;
 
-      // 1) Buscar fila marcada con "TOTAL$" o "TOTAL" cerca del final (filas 24 a 32)
       let totalRow = aoa.find((row, idx) =>
         idx >= 22 &&
         row &&
@@ -233,7 +240,6 @@ export const parseExcelBuffer = (arrayBuffer) => {
         }
       }
 
-      // 2) Fallback a filas 25-28 (índices 24-27) si no tenía etiqueta "TOTAL$"
       if (totalMonto === 0) {
         for (let i = 24; i <= Math.min(28, aoa.length - 1); i++) {
           const row = aoa[i];
@@ -249,7 +255,6 @@ export const parseExcelBuffer = (arrayBuffer) => {
         }
       }
 
-      // 3) Si la planilla está en curso y aún no tiene la fila de suma, sumar los días cargados
       if (totalMonto === 0) {
         let sumM = 0;
         let sumC = 0;
