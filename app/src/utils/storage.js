@@ -1,7 +1,7 @@
 import localforage from 'localforage';
 import { parseExcelBuffer } from './parser';
 
-const DATA_KEY = 'recaudacion_data_v6';
+const DATA_KEY = 'recaudacion_data_v7';
 const MANIFEST_KEY = 'recaudacion_manifest_ts';
 
 export const mergeParsedData = (existingData, parsedData) => {
@@ -37,8 +37,16 @@ export const saveData = async (parsedData, _filename) => {
 export const seedDefaultFiles = async (preserveUserUploads = true) => {
   let defaultFiles = [
     'TABLA ACUMULADOS.xlsx',
+    'RECA.01.xlsx',
+    'RECA.02.xlsx',
+    'RECA.03.xlsx',
     'RECA.04.xlsx',
-    'RECA.05.xlsx'
+    'RECA.05.xlsx',
+    'RECA.06.xlsx',
+    'RECA.07.xlsx',
+    'RECA.08.xlsx',
+    'RECA.09.xlsx',
+    'RECA.10.xlsx'
   ];
   let manifestTs = null;
 
@@ -58,7 +66,7 @@ export const seedDefaultFiles = async (preserveUserUploads = true) => {
   let combined = preserveUserUploads ? ((await localforage.getItem(DATA_KEY)) || []) : [];
   for (const filename of defaultFiles) {
     try {
-      const url = `./data/${encodeURIComponent(filename)}`;
+      const url = `./data/${encodeURIComponent(filename)}?v=${encodeURIComponent(manifestTs || Date.now())}`;
       const res = await fetch(url);
       if (res.ok) {
         const buf = await res.arrayBuffer();
