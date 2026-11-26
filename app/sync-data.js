@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -30,10 +31,9 @@ rootFiles.forEach(file => {
   }
 });
 
-// 3. Generate manifest.json of all Excel files in public/data/
+// 3. Generate manifest.json of all Excel files in public/data/ with content hashes
 const dataFiles = fs.readdirSync(dataDir).filter(isExcel);
 
-// Put TABLA ACUMULADOS first so historical base loads first, then RECA files
 dataFiles.sort((a, b) => {
   const aIsAcum = a.toUpperCase().includes('ACUMULADO') ? 0 : 1;
   const bIsAcum = b.toUpperCase().includes('ACUMULADO') ? 0 : 1;
@@ -41,9 +41,31 @@ dataFiles.sort((a, b) => {
   return a.localeCompare(b);
 });
 
+const fileHashes = {};
+dataFiles.forEach(file => {
+  const buf = fs.readFileSync(path.join(dataDir, file));
+  fileHashes[file] = crypto.createHash('sha1').update(buf).digest('hex').slice(0, 12);
+});
+
+const manifestPath = path.join(dataDir, 'manifest.json');
+let prevHashes = {};
+let prevUpdatedAt = null;
+if (fs.existsSync(manifestPath)) {
+  try {
+    const prev = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    prevHashes = prev.hashes || {};
+    prevUpdatedAt = prev.updatedAt || null;
+  } catch (_e) {
+    // ignore
+  }
+}
+
+const hashesChanged = JSON.stringify(fileHashes) !== JSON.stringify(prevHashes);
+const updatedAt = hashesChanged || !prevUpdatedAt ? new Date().toISOString() : prevUpdatedAt;
+
 fs.writeFileSync(
-  path.join(dataDir, 'manifest.json'),
-  JSON.stringify({ updatedAt: new Date().toISOString(), files: dataFiles }, null, 2)
+  manifestPath,
+  JSON.stringify({ updatedAt, files: dataFiles, hashes: fileHashes }, null, 2)
 );
 
 console.log('Datos sincronizados para web/GitHub:', dataFiles);
