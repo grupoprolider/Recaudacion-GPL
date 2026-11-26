@@ -102,7 +102,6 @@ export const parseExcelBuffer = (arrayBuffer) => {
       if (typeof cell === 'string' && cell.toUpperCase().includes('MONTO COBRADO')) {
         const monthIndex = monthBlocks.length + 1;
         if (monthIndex <= 12) {
-          // Detectar dónde están FECHA y DIA HABIL hacia la izquierda de MONTO COBRADO
           let colFecha = index - 3;
           let colDiaHabil = index - 2;
           for (let k = Math.max(0, index - 6); k < index; k++) {
@@ -160,27 +159,41 @@ export const parseExcelBuffer = (arrayBuffer) => {
         totalClientes = Math.round(sumClientes);
       }
 
-      // Extraer detalle por Día Hábil (filas entre encabezado y fila de total)
-      const daily = [];
-      let runningAcum = 0;
+      // Encontrar la última fila diaria que efectivamente tiene cobros cargados (> 0)
+      let lastLoadedRow = -1;
       for (let r = headerRowIndex + 1; r < limitRow; r++) {
         const row = aoa[r];
         if (!row) continue;
         const mDia = typeof row[block.colMonto] === 'number' ? row[block.colMonto] : 0;
         const cDia = typeof row[block.colCobrados] === 'number' ? Math.round(row[block.colCobrados]) : 0;
         if (mDia > 0 || cDia > 0) {
+          lastLoadedRow = r;
+        }
+      }
+
+      // Extraer detalle por Día Hábil (incluyendo días intermedios con 0 cobros, ej. feriados, hasta lastLoadedRow)
+      const daily = [];
+      let runningAcumMonto = 0;
+      let runningAcumClientes = 0;
+      if (lastLoadedRow >= headerRowIndex + 1) {
+        for (let r = headerRowIndex + 1; r <= lastLoadedRow; r++) {
+          const row = aoa[r] || [];
+          const mDia = typeof row[block.colMonto] === 'number' ? row[block.colMonto] : 0;
+          const cDia = typeof row[block.colCobrados] === 'number' ? Math.round(row[block.colCobrados]) : 0;
           const rawDia = row[block.colDiaHabil];
           const diaHabil = typeof rawDia === 'number' && rawDia >= 1 && rawDia <= 25
             ? rawDia
-            : daily.length + 1;
+            : (r - headerRowIndex);
           const dateObj = parsePossibleDate(row[block.colFecha]);
-          runningAcum += mDia;
+          runningAcumMonto += mDia;
+          runningAcumClientes += cDia;
           daily.push({
             diaHabil,
             fecha: formatDayMonth(dateObj),
             clientes: cDia,
             monto: mDia,
-            acumulado: runningAcum
+            acumulado: runningAcumMonto,
+            acumuladoClientes: runningAcumClientes
           });
         }
       }
@@ -303,9 +316,10 @@ export const parseExcelBuffer = (arrayBuffer) => {
       }
 
       // Extraer detalle por Día Hábil de esta solapa RECA
-      const daily = [];
-      let runningAcum = 0;
       const maxDailyRow = totalRowIdx !== -1 ? totalRowIdx : Math.min(25, aoa.length);
+      const rawDailyRows = [];
+      let lastLoadedIdx = -1;
+
       for (let r = headerRowIndex + 1; r < maxDailyRow; r++) {
         const row = aoa[r];
         if (!row) continue;
@@ -322,16 +336,31 @@ export const parseExcelBuffer = (arrayBuffer) => {
         }
 
         const cDia = typeof row[colCobrados] === 'number' ? Math.round(row[colCobrados]) : 0;
+        rawDailyRows.push({
+          dateObj,
+          clientes: cDia,
+          monto: mDia
+        });
         if (mDia > 0 || cDia > 0) {
-          runningAcum += mDia;
-          daily.push({
-            diaHabil: daily.length + 1,
-            fecha: formatDayMonth(dateObj),
-            clientes: cDia,
-            monto: mDia,
-            acumulado: runningAcum
-          });
+          lastLoadedIdx = rawDailyRows.length - 1;
         }
+      }
+
+      const daily = [];
+      let runningAcumMonto = 0;
+      let runningAcumClientes = 0;
+      for (let i = 0; i <= lastLoadedIdx; i++) {
+        const item = rawDailyRows[i];
+        runningAcumMonto += item.monto;
+        runningAcumClientes += item.clientes;
+        daily.push({
+          diaHabil: i + 1,
+          fecha: formatDayMonth(item.dateObj),
+          clientes: item.clientes,
+          monto: item.monto,
+          acumulado: runningAcumMonto,
+          acumuladoClientes: runningAcumClientes
+        });
       }
 
       if (totalMonto === 0 && daily.length > 0) {

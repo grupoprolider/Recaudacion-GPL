@@ -7,7 +7,7 @@ import * as XLSX from 'xlsx';
 import { parseExcelFile } from './utils/parser';
 import { saveData, loadData, clearData, seedDefaultFiles } from './utils/storage';
 import {
-  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, LabelList
+  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, LabelList, Legend
 } from 'recharts';
 
 const renderTopBarLabel = (fill, fontSize) => (props) => {
@@ -61,7 +61,9 @@ function App() {
   const [selectedPeriod, setSelectedPeriod] = useState('LAST_12');
   const [selectedPlatformMonth, setSelectedPlatformMonth] = useState('');
   const [selectedDailyMonth, setSelectedDailyMonth] = useState('');
+  const [selectedCutoffDay, setSelectedCutoffDay] = useState(0); // 0 = último día hábil cargado
   const [dailyMetric, setDailyMetric] = useState('MONTO');
+  const [compareDailyPrev, setCompareDailyPrev] = useState(true);
   const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth <= 768);
   const dashboardRef = useRef(null);
 
@@ -103,6 +105,7 @@ function App() {
         if (latestRecaKey) {
           setSelectedPlatformMonth(latestRecaKey);
           setSelectedDailyMonth(latestRecaKey);
+          setSelectedCutoffDay(0);
         }
         const periodsList = Array.from(detectedPeriods).slice(0, 5).join(', ');
         setUploadNotice({
@@ -154,7 +157,7 @@ function App() {
       setShowUploader(false);
       setUploadNotice({
         type: 'success',
-        text: 'Se recargaron las planillas base publicadas en el servidor.'
+        text: 'Se recargaron las planillas actualizadas desde el repositorio.'
       });
     } finally {
       setLoading(false);
@@ -242,10 +245,12 @@ function App() {
     new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(value);
   const formatCompactMoney = (value) => {
     if (!value) return '$0';
-    if (value >= 1000000) {
-      return `$${(value / 1000000).toLocaleString('es-AR', { minimumFractionDigits: isMobile ? 0 : 1, maximumFractionDigits: isMobile ? 0 : 1 })}M`;
+    const abs = Math.abs(value);
+    const sign = value < 0 ? '-' : '';
+    if (abs >= 1000000) {
+      return `${sign}$${(abs / 1000000).toLocaleString('es-AR', { minimumFractionDigits: isMobile ? 0 : 1, maximumFractionDigits: isMobile ? 0 : 1 })}M`;
     }
-    return `$${Math.round(value / 1000).toLocaleString('es-AR')}K`;
+    return `${sign}$${Math.round(abs / 1000).toLocaleString('es-AR')}K`;
   };
   const formatNumber = (value) => new Intl.NumberFormat('es-AR').format(Math.round(value || 0));
 
@@ -271,26 +276,127 @@ function App() {
 
   const activeDailyMonthKey = activeDailyRecord ? `${activeDailyRecord.year}-${activeDailyRecord.month}` : '';
 
+  // Find consecutive previous month record with daily data for same-business-day comparison
+  const prevDailyRecord = activeDailyRecord
+    ? platformFilteredData.find(d => {
+        const isPrev =
+          (activeDailyRecord.month > 1 && d.year === activeDailyRecord.year && d.month === activeDailyRecord.month - 1) ||
+          (activeDailyRecord.month === 1 && d.year === activeDailyRecord.year - 1 && d.month === 12);
+        return isPrev && Array.isArray(d.daily) && d.daily.length > 0;
+      }) || null
+    : null;
+
+  // Map daily entries by diaHabil (1..23)
+  const currDailyMap = new Map();
+  let maxCurrDiaHabil = 0;
+  if (activeDailyRecord && Array.isArray(activeDailyRecord.daily)) {
+    activeDailyRecord.daily.forEach((d, idx) => {
+      const dh = d.diaHabil || idx + 1;
+      currDailyMap.set(dh, d);
+      if ((d.monto > 0 || d.clientes > 0) && dh > maxCurrDiaHabil) {
+        maxCurrDiaHabil = dh;
+      }
+    });
+  }
+
+  const prevDailyMap = new Map();
+  let maxPrevDiaHabil = 0;
+  if (prevDailyRecord && Array.isArray(prevDailyRecord.daily)) {
+    prevDailyRecord.daily.forEach((d, idx) => {
+      const dh = d.diaHabil || idx + 1;
+      prevDailyMap.set(dh, d);
+      if ((d.monto > 0 || d.clientes > 0) && dh > maxPrevDiaHabil) {
+        maxPrevDiaHabil = dh;
+      }
+    });
+  }
+
+  // Cutoff business day for same-day comparison (defaults to last loaded business day of activeDailyRecord)
+  const effectiveCutoffDay =
+    selectedCutoffDay > 0 && selectedCutoffDay <= maxCurrDiaHabil
+      ? selectedCutoffDay
+      : maxCurrDiaHabil;
+
+  // Compute cumulative totals from Día Hábil 1 up to effectiveCutoffDay for both current and previous month
+  let currAcumMontoAtCutoff = 0;
+  let currAcumClientesAtCutoff = 0;
+  let prevAcumMontoAtCutoff = 0;
+  let prevAcumClientesAtCutoff = 0;
+
+  for (let dh = 1; dh <= effectiveCutoffDay; dh++) {
+    const cItem = currDailyMap.get(dh);
+    if (cItem) {
+      currAcumMontoAtCutoff += cItem.monto || 0;
+      currAcumClientesAtCutoff += cItem.clientes || 0;
+    }
+    const pItem = prevDailyMap.get(dh);
+    if (pItem) {
+      prevAcumMontoAtCutoff += pItem.monto || 0;
+      prevAcumClientesAtCutoff += pItem.clientes || 0;
+    }
+  }
+
+  const currCutoffItem = currDailyMap.get(effectiveCutoffDay) || null;
+  const prevCutoffItem = prevDailyMap.get(effectiveCutoffDay) || null;
+
+  const difSameDayClientes = currAcumClientesAtCutoff - prevAcumClientesAtCutoff;
+  const pctSameDayClientes =
+    prevAcumClientesAtCutoff > 0 ? (difSameDayClientes / prevAcumClientesAtCutoff) * 100 : 0;
+
+  const difSameDayMonto = currAcumMontoAtCutoff - prevAcumMontoAtCutoff;
+  const pctSameDayMonto =
+    prevAcumMontoAtCutoff > 0 ? (difSameDayMonto / prevAcumMontoAtCutoff) * 100 : 0;
+
+  const difSingleDayClientes = (currCutoffItem?.clientes || 0) - (prevCutoffItem?.clientes || 0);
+  const difSingleDayMonto = (currCutoffItem?.monto || 0) - (prevCutoffItem?.monto || 0);
+
   const dailyTotalMonto = activeDailyRecord
     ? activeDailyRecord.daily.reduce((acc, item) => acc + (item.monto || 0), 0) || activeDailyRecord.monto
     : 0;
 
-  const dailyChartData = activeDailyRecord
-    ? activeDailyRecord.daily.map((d, idx) => {
-        const pctAcum = dailyTotalMonto > 0 ? ((d.acumulado || 0) / dailyTotalMonto) * 100 : 0;
-        return {
-          name: isMobile ? `D${d.diaHabil || idx + 1}` : `Día ${d.diaHabil || idx + 1}`,
-          fullName: `Día Hábil ${d.diaHabil || idx + 1}${d.fecha ? ` (${d.fecha})` : ''}`,
-          diaHabil: d.diaHabil || idx + 1,
-          fecha: d.fecha || '',
-          Monto: d.monto,
-          Clientes: d.clientes,
-          Valor: dailyMetric === 'MONTO' ? d.monto : d.clientes,
-          Label: dailyMetric === 'MONTO' ? formatCompactMoney(d.monto) : formatNumber(d.clientes),
-          pctAcum: Math.min(100, pctAcum)
-        };
-      })
-    : [];
+  // Build Daily Chart Data (1..maxCurrDiaHabil) including previous month comparison
+  let runCurrM = 0;
+  let runCurrC = 0;
+  let runPrevM = 0;
+  let runPrevC = 0;
+
+  const dailyChartData = [];
+  for (let dh = 1; dh <= maxCurrDiaHabil; dh++) {
+    const cItem = currDailyMap.get(dh) || { diaHabil: dh, fecha: '', clientes: 0, monto: 0 };
+    const pItem = prevDailyMap.get(dh) || { diaHabil: dh, fecha: '', clientes: 0, monto: 0 };
+
+    runCurrM += cItem.monto || 0;
+    runCurrC += cItem.clientes || 0;
+    runPrevM += pItem.monto || 0;
+    runPrevC += pItem.clientes || 0;
+
+    const pctAcum = dailyTotalMonto > 0 ? (runCurrM / dailyTotalMonto) * 100 : 0;
+    const valCurr = dailyMetric === 'MONTO' ? cItem.monto : cItem.clientes;
+    const valPrev = dailyMetric === 'MONTO' ? pItem.monto : pItem.clientes;
+
+    dailyChartData.push({
+      name: isMobile ? `D${dh}` : `Día ${dh}`,
+      fullName: `Día Hábil ${dh}${cItem.fecha ? ` (${cItem.fecha})` : ''}`,
+      diaHabil: dh,
+      fecha: cItem.fecha || '',
+      fechaPrev: pItem.fecha || '',
+      Monto: cItem.monto || 0,
+      Clientes: cItem.clientes || 0,
+      MontoPrev: pItem.monto || 0,
+      ClientesPrev: pItem.clientes || 0,
+      AcumMonto: runCurrM,
+      AcumClientes: runCurrC,
+      AcumMontoPrev: runPrevM,
+      AcumClientesPrev: runPrevC,
+      DifAcumMonto: runCurrM - runPrevM,
+      DifAcumClientes: runCurrC - runPrevC,
+      Valor: valCurr,
+      ValorPrev: valPrev,
+      Label: dailyMetric === 'MONTO' ? formatCompactMoney(cItem.monto) : formatNumber(cItem.clientes),
+      LabelPrev: dailyMetric === 'MONTO' ? formatCompactMoney(pItem.monto) : formatNumber(pItem.clientes),
+      pctAcum: Math.min(100, pctAcum)
+    });
+  }
 
   // Daily summary stats (Peak day, First 10 business days %, Daily average)
   const peakDay =
@@ -397,12 +503,17 @@ function App() {
         Plataforma: selectedPlatform,
         'Día Hábil': d.diaHabil,
         Fecha: d.fecha,
-        'Clientes Cobrados': d.Clientes,
-        'Monto Cobrado ($)': Math.round(d.Monto * 100) / 100,
-        '% Acumulado del Mes': `${d.pctAcum.toFixed(1)}%`
+        'Clientes Día': d.Clientes,
+        'Monto Día ($)': Math.round(d.Monto * 100) / 100,
+        'Acum. Clientes Mes Actual': d.AcumClientes,
+        'Acum. Clientes Mes Ant. (mismo día)': d.AcumClientesPrev,
+        'Dif. Acum. Clientes vs Mes Ant.': d.DifAcumClientes,
+        'Acum. Monto Mes Actual ($)': Math.round(d.AcumMonto * 100) / 100,
+        'Acum. Monto Mes Ant. ($)': Math.round(d.AcumMontoPrev * 100) / 100,
+        'Dif. Acum. Monto vs Mes Ant. ($)': Math.round(d.DifAcumMonto * 100) / 100
       }));
       const wsDaily = XLSX.utils.json_to_sheet(dailyRows);
-      XLSX.utils.book_append_sheet(wb, wsDaily, 'Por Día Hábil');
+      XLSX.utils.book_append_sheet(wb, wsDaily, 'Comparativo Día Hábil');
     }
 
     if (platformData.length > 0) {
@@ -442,7 +553,10 @@ function App() {
                 <select
                   className="select-input"
                   value={selectedPlatform}
-                  onChange={(e) => setSelectedPlatform(e.target.value)}
+                  onChange={(e) => {
+                    setSelectedPlatform(e.target.value);
+                    setSelectedCutoffDay(0);
+                  }}
                 >
                   {uniquePlatforms.map(p => (
                     <option key={p} value={p}>
@@ -488,7 +602,7 @@ function App() {
               <button className="btn btn-teal" onClick={handleDownloadExcel}>
                 <FileSpreadsheet size={16} /> Exportar Excel
               </button>
-              <button className="btn btn-secondary" onClick={handleReloadDefaults} title="Recargar planillas originales">
+              <button className="btn btn-secondary" onClick={handleReloadDefaults} title="Recargar planillas desde GitHub">
                 <RefreshCw size={16} /> {isMobile ? 'Base' : ''}
               </button>
               <button className="btn btn-secondary" onClick={handleClear} title="Limpiar datos del navegador">
@@ -576,7 +690,7 @@ function App() {
               <div className="kpi-value">{formatMoney(latest.monto)}</div>
               <div className={`kpi-change ${latest.difMontos > 0 ? 'positive' : latest.difMontos < 0 ? 'negative' : 'neutral'}`}>
                 {latest.difMontos > 0 ? <TrendingUp className="icon" /> : <TrendingDown className="icon" />}
-                {formatMoney(Math.abs(latest.difMontos))} ({latest.pctMontos >= 0 ? '+' : ''}{latest.pctMontos.toFixed(1)}%) vs mes anterior
+                {formatMoney(Math.abs(latest.difMontos))} ({latest.pctMontos >= 0 ? '+' : ''}{latest.pctMontos.toFixed(1)}%) vs cierre mes anterior
               </div>
             </div>
 
@@ -585,7 +699,7 @@ function App() {
               <div className="kpi-value">{formatNumber(latest.clientes)}</div>
               <div className={`kpi-change ${latest.difClientes > 0 ? 'positive' : latest.difClientes < 0 ? 'negative' : 'neutral'}`}>
                 {latest.difClientes > 0 ? <TrendingUp className="icon" /> : <TrendingDown className="icon" />}
-                {formatNumber(Math.abs(latest.difClientes))} ({latest.pctClientes >= 0 ? '+' : ''}{latest.pctClientes.toFixed(1)}%) vs mes anterior
+                {formatNumber(Math.abs(latest.difClientes))} ({latest.pctClientes >= 0 ? '+' : ''}{latest.pctClientes.toFixed(1)}%) vs cierre mes anterior
               </div>
             </div>
 
@@ -599,6 +713,151 @@ function App() {
               </div>
             </div>
           </div>
+
+          {/* NUEVO INFORME: Comparativo de Avance al Mismo Día Hábil vs. Mes Anterior */}
+          {activeDailyRecord && prevDailyRecord && effectiveCutoffDay > 0 && (
+            <div className="dashboard-grid">
+              <div
+                className="glass-panel"
+                style={{
+                  gridColumn: '1 / -1',
+                  borderLeft: `6px solid ${difSameDayClientes >= 0 ? '#0f8a5f' : '#c82333'}`
+                }}
+              >
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    flexWrap: 'wrap',
+                    gap: '0.75rem',
+                    marginBottom: '0.9rem'
+                  }}
+                >
+                  <div>
+                    <h2 className="section-title" style={{ marginBottom: '0.2rem' }}>
+                      <span className="section-dot" />
+                      Comparativo al Mismo Día Hábil: {activeDailyRecord.monthName} vs. {prevDailyRecord.monthName} {prevDailyRecord.year}
+                    </h2>
+                    <p style={{ fontSize: '0.88rem', color: '#4e6772', fontWeight: 500 }}>
+                      Comparación exacta del acumulado desde el <strong>Día Hábil 1 al Día Hábil {effectiveCutoffDay}</strong>{' '}
+                      {currCutoffItem?.fecha ? `(corte ${currCutoffItem.fecha})` : ''} contra igual día hábil del mes anterior{' '}
+                      {prevCutoffItem?.fecha ? `(${prevCutoffItem.fecha})` : ''}.
+                    </p>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '0.65rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                    <div className="filter-group">
+                      <span className="filter-label">Corte Día Hábil:</span>
+                      <select
+                        className="select-input"
+                        value={effectiveCutoffDay}
+                        onChange={(e) => setSelectedCutoffDay(Number(e.target.value))}
+                      >
+                        {Array.from({ length: maxCurrDiaHabil }, (_, i) => i + 1).map(dh => (
+                          <option key={dh} value={dh}>
+                            Hasta Día Hábil {dh}{dh === maxCurrDiaHabil ? ' (Último cargado)' : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {recordsWithDaily.length > 1 && (
+                      <div className="filter-group">
+                        <span className="filter-label">Mes:</span>
+                        <select
+                          className="select-input"
+                          value={activeDailyMonthKey}
+                          onChange={(e) => {
+                            setSelectedDailyMonth(e.target.value);
+                            setSelectedCutoffDay(0);
+                          }}
+                        >
+                          {recordsWithDaily.map(r => (
+                            <option key={`${r.year}-${r.month}`} value={`${r.year}-${r.month}`}>
+                              {r.monthName} {r.year}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Frase ejecutiva de diagnóstico directo */}
+                <div
+                  style={{
+                    background: difSameDayClientes >= 0 && difSameDayMonto >= 0 ? '#ecfdf5' : '#fff7ed',
+                    border: `1px solid ${difSameDayClientes >= 0 && difSameDayMonto >= 0 ? '#6ee7b7' : '#fdba74'}`,
+                    color: '#093947',
+                    padding: '0.85rem 1.1rem',
+                    borderRadius: '10px',
+                    marginBottom: '1rem',
+                    fontSize: '0.95rem',
+                    fontWeight: 600
+                  }}
+                >
+                  Al <strong>Día Hábil {effectiveCutoffDay}</strong> de <strong>{activeDailyRecord.monthName}</strong>, estamos{' '}
+                  <strong style={{ color: difSameDayClientes >= 0 ? '#0f8a5f' : '#c82333' }}>
+                    {difSameDayClientes >= 0 ? 'ARRIBA' : 'ABAJO'} en {formatNumber(Math.abs(difSameDayClientes))} clientes ({pctSameDayClientes >= 0 ? '+' : ''}{pctSameDayClientes.toFixed(1)}%)
+                  </strong>{' '}
+                  y{' '}
+                  <strong style={{ color: difSameDayMonto >= 0 ? '#0f8a5f' : '#c82333' }}>
+                    {difSameDayMonto >= 0 ? 'ARRIBA' : 'ABAJO'} en {formatMoney(Math.abs(difSameDayMonto))} ({pctSameDayMonto >= 0 ? '+' : ''}{pctSameDayMonto.toFixed(1)}%)
+                  </strong>{' '}
+                  respecto al mismo día hábil de <strong>{prevDailyRecord.monthName}</strong>.
+                </div>
+
+                {/* 3 Tarjetas de Comparación al Día Hábil N */}
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))',
+                    gap: '0.9rem'
+                  }}
+                >
+                  <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '10px', padding: '0.9rem 1rem' }}>
+                    <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#4e6772', textTransform: 'uppercase' }}>
+                      Clientes Acumulados (Día 1 al {effectiveCutoffDay})
+                    </div>
+                    <div style={{ fontSize: '1.35rem', fontWeight: 800, color: difSameDayClientes >= 0 ? '#0f8a5f' : '#c82333', margin: '0.25rem 0' }}>
+                      {difSameDayClientes >= 0 ? '+' : '-'}{formatNumber(Math.abs(difSameDayClientes))} clientes ({pctSameDayClientes >= 0 ? '+' : ''}{pctSameDayClientes.toFixed(1)}%)
+                    </div>
+                    <div style={{ fontSize: '0.82rem', color: '#4e6772', fontWeight: 600 }}>
+                      {activeDailyRecord.monthName.substring(0, 3)}: <strong>{formatNumber(currAcumClientesAtCutoff)}</strong> vs.{' '}
+                      {prevDailyRecord.monthName.substring(0, 3)}: <strong>{formatNumber(prevAcumClientesAtCutoff)}</strong>
+                    </div>
+                  </div>
+
+                  <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '10px', padding: '0.9rem 1rem' }}>
+                    <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#4e6772', textTransform: 'uppercase' }}>
+                      Recaudación Acumulada (Día 1 al {effectiveCutoffDay})
+                    </div>
+                    <div style={{ fontSize: '1.35rem', fontWeight: 800, color: difSameDayMonto >= 0 ? '#0f8a5f' : '#c82333', margin: '0.25rem 0' }}>
+                      {difSameDayMonto >= 0 ? '+' : '-'}{formatMoney(Math.abs(difSameDayMonto))} ({pctSameDayMonto >= 0 ? '+' : ''}{pctSameDayMonto.toFixed(1)}%)
+                    </div>
+                    <div style={{ fontSize: '0.82rem', color: '#4e6772', fontWeight: 600 }}>
+                      {activeDailyRecord.monthName.substring(0, 3)}: <strong>{formatCompactMoney(currAcumMontoAtCutoff)}</strong> vs.{' '}
+                      {prevDailyRecord.monthName.substring(0, 3)}: <strong>{formatCompactMoney(prevAcumMontoAtCutoff)}</strong>
+                    </div>
+                  </div>
+
+                  <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '10px', padding: '0.9rem 1rem' }}>
+                    <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#4e6772', textTransform: 'uppercase' }}>
+                      Solo el Día Hábil {effectiveCutoffDay} (Puntual)
+                    </div>
+                    <div style={{ fontSize: '1.1rem', fontWeight: 800, color: '#093947', margin: '0.25rem 0' }}>
+                      {formatNumber(currCutoffItem?.clientes || 0)} cl. • {formatCompactMoney(currCutoffItem?.monto || 0)}
+                    </div>
+                    <div style={{ fontSize: '0.82rem', color: difSingleDayClientes >= 0 ? '#0f8a5f' : '#c82333', fontWeight: 600 }}>
+                      Vs. Día {effectiveCutoffDay} {prevDailyRecord.monthName.substring(0, 3)} ({formatNumber(prevCutoffItem?.clientes || 0)} cl.):{' '}
+                      {difSingleDayClientes >= 0 ? '+' : ''}{formatNumber(difSingleDayClientes)} cl. ({difSingleDayMonto >= 0 ? '+' : ''}{formatCompactMoney(difSingleDayMonto)})
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Gráfico 1: Evolución de Recaudación ($) */}
           <div className="dashboard-grid">
@@ -706,17 +965,31 @@ function App() {
             </div>
           </div>
 
-          {/* Gráfico Nuevo (#5): Curva de Cobranza por Día Hábil (Día 1 al 22) */}
+          {/* Gráfico 3: Curva de Cobranza por Día Hábil (con Comparativo opcional vs. Mes Anterior) */}
           {dailyChartData.length > 0 && activeDailyRecord && (
             <div className="dashboard-grid">
               <div className="glass-panel" style={{ gridColumn: '1 / -1' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.85rem', flexWrap: 'wrap', gap: '0.75rem' }}>
                   <h2 className="section-title" style={{ marginBottom: 0 }}>
                     <span className="section-dot" />
-                    Curva de Cobranza por Día Hábil (Día 1 al {dailyChartData.length}) — {activeDailyRecord.monthName} {activeDailyRecord.year}
+                    Curva de Cobranza por Día Hábil (Día 1 al {maxCurrDiaHabil}) — {activeDailyRecord.monthName} {activeDailyRecord.year}
                   </h2>
 
                   <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                    {prevDailyRecord && (
+                      <div className="filter-group">
+                        <span className="filter-label">Comparar:</span>
+                        <select
+                          className="select-input"
+                          value={compareDailyPrev ? 'YES' : 'NO'}
+                          onChange={(e) => setCompareDailyPrev(e.target.value === 'YES')}
+                        >
+                          <option value="YES">Vs. {prevDailyRecord.monthName}</option>
+                          <option value="NO">Solo {activeDailyRecord.monthName}</option>
+                        </select>
+                      </div>
+                    )}
+
                     <div className="filter-group">
                       <span className="filter-label">Métrica:</span>
                       <select
@@ -735,7 +1008,10 @@ function App() {
                         <select
                           className="select-input"
                           value={activeDailyMonthKey}
-                          onChange={(e) => setSelectedDailyMonth(e.target.value)}
+                          onChange={(e) => {
+                            setSelectedDailyMonth(e.target.value);
+                            setSelectedCutoffDay(0);
+                          }}
                         >
                           {recordsWithDaily.map(r => (
                             <option key={`${r.year}-${r.month}`} value={`${r.year}-${r.month}`}>
@@ -791,7 +1067,7 @@ function App() {
                   </div>
                 </div>
 
-                <div className="chart-container" style={{ height: isMobile ? '290px' : '350px' }}>
+                <div className="chart-container" style={{ height: isMobile ? '300px' : '360px' }}>
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart
                       data={dailyChartData}
@@ -820,17 +1096,46 @@ function App() {
                         contentStyle={{ backgroundColor: '#093947', border: 'none', borderRadius: '8px', color: '#fff' }}
                         itemStyle={{ color: '#fff' }}
                         labelStyle={{ color: '#f78da7', fontWeight: 700 }}
-                        formatter={(_value, _name, props) => {
+                        formatter={(_value, name, props) => {
                           const p = props.payload;
+                          if (name === 'MesAnterior') {
+                            return [
+                              `${formatMoney(p.MontoPrev)} • ${formatNumber(p.ClientesPrev)} cl. (Acum al Día ${p.diaHabil}: ${formatCompactMoney(p.AcumMontoPrev)} / ${formatNumber(p.AcumClientesPrev)} cl.)`,
+                              `${prevDailyRecord?.monthName || 'Mes Anterior'}`
+                            ];
+                          }
+                          const difCl = p.DifAcumClientes;
+                          const difMo = p.DifAcumMonto;
                           return [
-                            `${formatMoney(p.Monto)} • ${formatNumber(p.Clientes)} clientes (Acum: ${p.pctAcum.toFixed(1)}%)`,
-                            'Cobranza del Día'
+                            `${formatMoney(p.Monto)} • ${formatNumber(p.Clientes)} cl. (Acum al Día ${p.diaHabil}: ${difCl >= 0 ? '+' : ''}${formatNumber(difCl)} cl. / ${difMo >= 0 ? '+' : ''}${formatCompactMoney(difMo)} vs mes ant.)`,
+                            `${activeDailyRecord.monthName}`
                           ];
                         }}
                         labelFormatter={(label, payload) => payload?.[0]?.payload?.fullName || label}
                       />
+                      {compareDailyPrev && prevDailyRecord && (
+                        <Legend
+                          verticalAlign="top"
+                          height={28}
+                          formatter={(val) =>
+                            val === 'MesAnterior'
+                              ? `${prevDailyRecord.monthName} ${prevDailyRecord.year} (Mes Anterior)`
+                              : `${activeDailyRecord.monthName} ${activeDailyRecord.year} (Actual)`
+                          }
+                        />
+                      )}
+                      {compareDailyPrev && prevDailyRecord && (
+                        <Bar
+                          dataKey="ValorPrev"
+                          name="MesAnterior"
+                          fill="#cbd5e1"
+                          radius={[4, 4, 0, 0]}
+                          isAnimationActive={false}
+                        />
+                      )}
                       <Bar
                         dataKey="Valor"
+                        name="MesActual"
                         fill={dailyMetric === 'MONTO' ? '#7B1C55' : '#159A8A'}
                         radius={[4, 4, 0, 0]}
                         isAnimationActive={false}

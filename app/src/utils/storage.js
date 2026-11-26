@@ -1,7 +1,7 @@
 import localforage from 'localforage';
 import { parseExcelBuffer } from './parser';
 
-const DATA_KEY = 'recaudacion_data_v9';
+const DATA_KEY = 'recaudacion_data_v10';
 const MANIFEST_KEY = 'recaudacion_manifest_ts';
 
 const GITHUB_API_CONTENTS = 'https://api.github.com/repos/grupoprolider/Recaudacion-GPL/contents/';
